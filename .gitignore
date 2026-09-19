@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Listener
+sample.wav
+build_assets/
+listener.log
+!listener.spec

@@ -1,0 +1,11 @@
+faster-whisper>=1.1.0
+ctranslate2>=4.6.0
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+sounddevice>=0.5.0
+numpy
+keyboard>=0.13.5
+pyperclip>=1.9.0
+pystray>=0.19.5
+Pillow
+pyinstaller

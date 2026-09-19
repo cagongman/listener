@@ -1,0 +1,10 @@
+{
+  "model": "large-v3",
+  "device": "auto",
+  "compute_type": "float16",
+  "language": "ko",
+  "hotkey": "ctrl+alt+m",
+  "beam_size": 5,
+  "vad_filter": true,
+  "sample_rate": 16000
+}
