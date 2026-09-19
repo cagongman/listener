@@ -1,3 +1,4 @@
+import ctypes
 import enum
 import logging
 import sys
@@ -146,6 +147,8 @@ class App:
         self.icon.stop()
 
     def run(self) -> None:
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            log.warning("Not running as administrator: hotkey and paste will not work in elevated windows")
         self.hotkey = Hotkey(self.cfg.hotkey, self._on_toggle)
         threading.Thread(target=self._load_model, daemon=True).start()
         self.icon.run()

@@ -96,6 +96,7 @@ listener/
 
 ## 문제 해결
 
+- **특정 창(터미널 등)에서 단축키가 안 먹음**: 그 창이 관리자 권한으로 실행 중인 경우입니다. Windows는 일반 권한 프로세스의 키보드 훅/키 전송이 관리자 창에 닿지 않게 막습니다(UIPI). exe는 실행 시 UAC로 관리자 권한을 요청하며, 소스 실행은 관리자 터미널에서 `python -m listener` 를 실행하세요.
 - **키보드 입력이 안 됨**: 핫키 등록 시 `suppress=True` 를 쓰면 전체 키 입력이 막힙니다. 현재는 `suppress=False` 로 고정되어 있습니다.
 - **`cublas64_12.dll is not found`**: `nvidia-cublas-cu12` 가 설치되어 있는지 확인하세요. `transcriber.py` 가 `site-packages/nvidia/*/bin` 을 DLL 검색 경로에 등록합니다.
 - **GPU가 아닌 CPU로 동작**: `listener.log` 에서 `CUDA load failed` 경고를 확인하세요. `device`를 `cuda`로 고정하면 폴백 없이 오류가 출력됩니다.

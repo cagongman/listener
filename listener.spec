@@ -33,6 +33,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    uac_admin=True,
     icon="build_assets/listener.ico",
 )
 coll = COLLECT(
