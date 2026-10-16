@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -26,10 +27,18 @@ def _register_nvidia_dlls() -> None:
 _register_nvidia_dlls()
 
 from faster_whisper import WhisperModel  # noqa: E402
+from faster_whisper.vad import collect_chunks, get_speech_timestamps  # noqa: E402
 
 log = logging.getLogger(__name__)
 
 MIN_AUDIO_SECONDS = 0.3
+
+# Apple Silicon GPU (Metal) weights; device "auto"/"mlx" on macOS uses these, "cpu" stays on faster-whisper.
+MLX_REPOS = {
+    "medium": "mlx-community/whisper-medium-mlx",
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
 
 
 class Transcriber:
@@ -44,6 +53,8 @@ class Transcriber:
         self.sample_rate = sample_rate
         self._model: WhisperModel | None = None
         self._lock = threading.Lock()
+        # MLX GPU streams are per-thread, so every mlx call must run on this one worker.
+        self._mlx = ThreadPoolExecutor(1, thread_name_prefix="mlx") if sys.platform == "darwin" else None
 
     @property
     def ready(self) -> bool:
@@ -53,7 +64,16 @@ class Transcriber:
         with self._lock:
             self._model = self._create_model()
 
-    def _create_model(self) -> WhisperModel:
+    def _create_model(self):
+        if sys.platform == "darwin" and self.device in ("auto", "mlx"):
+            from mlx_whisper.transcribe import ModelHolder, mx
+
+            repo = MLX_REPOS[self.model_name]
+            log.info("Loading %s on mlx (%s)", self.model_name, repo)
+            self._mlx.submit(ModelHolder.get_model, repo, mx.float16).result()  # download + cache for transcribe()
+            self.device = "mlx"
+            self.compute_type = "float16"
+            return repo
         if self.device in ("auto", "cuda"):
             try:
                 log.info("Loading %s on cuda/%s", self.model_name, self.compute_type)
@@ -73,6 +93,10 @@ class Transcriber:
     def switch_model(self, model_name: str) -> None:
         with self._lock:
             self._model = None
+            if self.device == "mlx":
+                from mlx_whisper.transcribe import ModelHolder
+
+                ModelHolder.model = None
             gc.collect()
             self.model_name = model_name
             self._model = self._create_model()
@@ -83,6 +107,8 @@ class Transcriber:
         with self._lock:
             if self._model is None:
                 self._model = self._create_model()
+            if self.device == "mlx":
+                return self._transcribe_mlx(audio)
             segments, _ = self._model.transcribe(
                 audio,
                 language=self.language,
@@ -90,3 +116,18 @@ class Transcriber:
                 vad_filter=self.vad_filter,
             )
             return " ".join(s.text.strip() for s in segments).strip()
+
+    def _transcribe_mlx(self, audio: np.ndarray) -> str:
+        import mlx_whisper
+
+        if self.vad_filter:
+            # mlx-whisper has no VAD; reuse faster-whisper's Silero VAD so silence doesn't hallucinate text.
+            speech = get_speech_timestamps(audio, sampling_rate=self.sample_rate)
+            if not speech:
+                return ""
+            audio = np.concatenate(collect_chunks(audio, speech, sampling_rate=self.sample_rate)[0])
+        # beam_size is ignored: mlx-whisper only implements greedy decoding.
+        result = self._mlx.submit(
+            mlx_whisper.transcribe, audio, path_or_hf_repo=self._model, language=self.language,
+        ).result()
+        return result["text"].strip()

@@ -7,7 +7,7 @@ MAC = sys.platform == "darwin"
 
 datas, binaries, hiddenimports = [], [], []
 pkgs = ("ctranslate2", "onnxruntime")
-pkgs += ("pynput",) if MAC else ("nvidia.cublas", "nvidia.cudnn", "nvidia.cuda_nvrtc")
+pkgs += ("pynput", "mlx", "mlx_whisper") if MAC else ("nvidia.cublas", "nvidia.cudnn", "nvidia.cuda_nvrtc")
 for pkg in pkgs:
     d, b, h = collect_all(pkg)
     datas += d

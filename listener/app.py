@@ -164,6 +164,12 @@ class App:
     def run(self) -> None:
         if sys.platform == "win32" and not ctypes.windll.shell32.IsUserAnAdmin():
             log.warning("Not running as administrator: hotkey and paste will not work in elevated windows")
+        if sys.platform == "darwin":
+            from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+
+            # Shows the system "allow Accessibility" prompt; the hotkey/paste need it, and the app must restart after.
+            if not AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}):
+                log.warning("Accessibility not granted: allow Listener in System Settings, then restart it")
         self.hotkey = Hotkey(self.cfg.hotkey, self._on_toggle)
         threading.Thread(target=self._load_model, daemon=True).start()
         self.icon.run()

@@ -13,7 +13,7 @@ else:
     APP_DIR = Path(sys.executable).parent
 CONFIG_PATH = APP_DIR / "config.json"
 
-AVAILABLE_MODELS = ["medium", "large-v3"]
+AVAILABLE_MODELS = ["medium", "large-v3"] + (["large-v3-turbo"] if sys.platform == "darwin" else [])
 
 
 @dataclass
