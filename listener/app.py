@@ -1,9 +1,14 @@
 import ctypes
 import enum
 import logging
+import subprocess
 import sys
 import threading
-import winsound
+
+if sys.platform == "win32":
+    import winsound
+else:
+    from PyObjCTools.AppHelper import callAfter
 
 import pystray
 from PIL import Image, ImageDraw
@@ -74,11 +79,21 @@ class App:
 
     def _set_state(self, state: State) -> None:
         self.state = state
+        if sys.platform == "darwin":
+            callAfter(self._refresh_icon, state)  # AppKit UI must be touched on the main thread
+        else:
+            self._refresh_icon(state)
+
+    def _refresh_icon(self, state: State) -> None:
         self.icon.icon = make_icon(COLORS[state])
         self.icon.title = f"Listener - {state.value}"
         self.icon.update_menu()
 
     def _beep(self, start: bool) -> None:
+        if sys.platform == "darwin":
+            sound = "Tink" if start else "Pop"
+            subprocess.run(["afplay", f"/System/Library/Sounds/{sound}.aiff"], check=False)
+            return
         try:
             winsound.Beep(880 if start else 440, 120)
         except RuntimeError:
@@ -147,7 +162,7 @@ class App:
         self.icon.stop()
 
     def run(self) -> None:
-        if not ctypes.windll.shell32.IsUserAnAdmin():
+        if sys.platform == "win32" and not ctypes.windll.shell32.IsUserAnAdmin():
             log.warning("Not running as administrator: hotkey and paste will not work in elevated windows")
         self.hotkey = Hotkey(self.cfg.hotkey, self._on_toggle)
         threading.Thread(target=self._load_model, daemon=True).start()

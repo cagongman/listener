@@ -3,7 +3,14 @@ import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
+if not getattr(sys, "frozen", False):
+    APP_DIR = Path(__file__).resolve().parent.parent
+elif sys.platform == "darwin":
+    # Writing inside Listener.app breaks its code signature; keep config/log in the user's Library.
+    APP_DIR = Path.home() / "Library" / "Application Support" / "Listener"
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    APP_DIR = Path(sys.executable).parent
 CONFIG_PATH = APP_DIR / "config.json"
 
 AVAILABLE_MODELS = ["medium", "large-v3"]
