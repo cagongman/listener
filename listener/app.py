@@ -4,6 +4,7 @@ import logging
 import subprocess
 import sys
 import threading
+import time
 
 if sys.platform == "win32":
     import winsound
@@ -161,16 +162,23 @@ class App:
             self.recorder.stop()
         self.icon.stop()
 
+    def _start_hotkey(self) -> None:
+        if sys.platform == "darwin":
+            from ApplicationServices import AXIsProcessTrusted, AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+
+            # The key event tap only works once Accessibility is granted: show the system prompt,
+            # then wait for the grant so the user doesn't have to restart the app.
+            if not AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}):
+                log.warning("Waiting for Accessibility permission (System Settings > Privacy & Security)")
+                while not AXIsProcessTrusted():
+                    time.sleep(1)
+                log.info("Accessibility granted")
+        self.hotkey = Hotkey(self.cfg.hotkey, self._on_toggle)
+
     def run(self) -> None:
         if sys.platform == "win32" and not ctypes.windll.shell32.IsUserAnAdmin():
             log.warning("Not running as administrator: hotkey and paste will not work in elevated windows")
-        if sys.platform == "darwin":
-            from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
-
-            # Shows the system "allow Accessibility" prompt; the hotkey/paste need it, and the app must restart after.
-            if not AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}):
-                log.warning("Accessibility not granted: allow Listener in System Settings, then restart it")
-        self.hotkey = Hotkey(self.cfg.hotkey, self._on_toggle)
+        threading.Thread(target=self._start_hotkey, daemon=True).start()
         threading.Thread(target=self._load_model, daemon=True).start()
         self.icon.run()
 
@@ -181,5 +189,6 @@ def main() -> None:
         logging.basicConfig(level=logging.INFO, format=fmt, filename=APP_DIR / "listener.log", encoding="utf-8")
     else:
         logging.basicConfig(level=logging.INFO, format=fmt)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    for name in ("httpx", "httpx2"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     App(load_config()).run()

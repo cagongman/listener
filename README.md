@@ -43,9 +43,11 @@ python -m listener
 
 macOS에서는 `Ctrl+Option+M`, 붙여넣기는 `Cmd+V`, 비프음 대신 시스템 사운드(Tink/Pop)를 씁니다. 처음 실행 시 아래 권한을 실행 주체(소스 실행: 터미널 앱, 빌드: Listener.app)에 허용해야 합니다 (시스템 설정 → 개인정보 보호 및 보안):
 
-- **마이크**: 녹음
-- **입력 모니터링**: 전역 단축키
-- **손쉬운 사용**: `Cmd+V` 키 입력 전송
+- **마이크**: 녹음 (첫 녹음 때 시스템 팝업)
+- **손쉬운 사용**: 전역 단축키 + `Cmd+V` 키 입력 전송 (빌드 앱은 시작 시 시스템 팝업을 띄움)
+- **입력 모니터링**: 목록에 나타나면 함께 허용
+
+빌드 앱은 손쉬운 사용 권한이 허용될 때까지 기다렸다가 단축키를 자동으로 켭니다(재시작 불필요). 대기 중이면 로그에 `Waiting for Accessibility permission` 이 남습니다. 소스 실행은 권한 허용 후 다시 실행하세요.
 
 트레이 메뉴:
 - **모델**: medium / large-v3 전환, macOS는 large-v3-turbo 추가 (선택은 `config.json`에 저장됨)
@@ -100,11 +102,19 @@ python build.py
 - Whisper 모델은 exe에 포함되지 않음 → 위 "모델 저장 위치" 참고
 - 빌드 정의: `listener.spec`, 진입점: `run.py`
 
-macOS에서 같은 명령으로 빌드하면 `dist/Listener.app` (약 600MB, mlx 포함) 이 생성됩니다. 크로스 빌드는 안 되므로 각 OS에서 빌드하세요.
+macOS:
+
+```
+export LISTENER_SIGN_IDENTITY="Apple Development: 이름 (XXXXXXXXXX)"   # 선택, 아래 참고
+python build.py
+```
+
+macOS에서 빌드하면 `dist/Listener.app` (약 600MB, mlx 포함) 이 생성됩니다. 크로스 빌드는 안 되므로 각 OS에서 빌드하세요.
 
 - 설정/로그: `~/Library/Application Support/Listener/` (`config.json`, `listener.log`). 앱 번들 안에 쓰면 코드 서명이 깨지므로 분리. `config.json` 이 없으면 기본값 사용
 - 메뉴바 전용 앱(`LSUIElement`)이라 Dock 아이콘이 없습니다
-- 서명되지 않은 빌드라 다른 Mac에서는 Gatekeeper 경고가 뜹니다(우클릭 → 열기). 재빌드하면 권한을 다시 허용해야 할 수 있습니다
+- **서명**: `LISTENER_SIGN_IDENTITY` 를 설정하면 그 인증서로 `codesign` 합니다. 사용 가능한 인증서는 `security find-identity -v -p codesigning` 으로 확인하세요. 설정하지 않으면 ad-hoc 서명이 되는데, ad-hoc은 빌드마다 서명 해시가 바뀌어 macOS가 손쉬운 사용/입력 모니터링 권한을 **매 빌드마다 초기화**합니다
+- 인증서 서명 빌드도 공증(notarization)은 되지 않았으므로 다른 Mac에서는 Gatekeeper 경고가 뜹니다(우클릭 → 열기)
 
 ## 모델 비교
 
@@ -141,6 +151,12 @@ listener/
 - **`cublas64_12.dll is not found`**: `nvidia-cublas-cu12` 가 설치되어 있는지 확인하세요. `transcriber.py` 가 `site-packages/nvidia/*/bin` 을 DLL 검색 경로에 등록합니다.
 - **GPU가 아닌 CPU로 동작**: `listener.log` 에서 `CUDA load failed` 경고를 확인하세요. `device`를 `cuda`로 고정하면 폴백 없이 오류가 출력됩니다.
 - **인식 결과가 비어 있음**: 녹음이 0.3초 미만이거나 VAD가 전부 무음으로 판단한 경우입니다. `vad_filter`를 `false`로 바꿔 확인해 보세요.
-- **macOS: 단축키가 반응 없음**: 입력 모니터링 권한을 확인하세요. 권한 목록에 이미 있다면 껐다 켜거나 제거 후 다시 추가합니다(재빌드 후 흔함).
+- **macOS: 단축키가 반응 없음**: 로그에 `not trusted` 또는 `Waiting for Accessibility permission` 이 있으면 손쉬운 사용 권한이 없는 것입니다. 목록에 Listener가 켜져 있는데도 그렇다면 다른 빌드(ad-hoc 서명)에 대한 권한이 남은 것이니 초기화 후 다시 허용하세요:
+  ```
+  tccutil reset Accessibility com.cagongman.listener
+  tccutil reset ListenEvent com.cagongman.listener
+  ```
 - **macOS: 인식은 되는데 붙여넣기가 안 됨**: 손쉬운 사용 권한이 없는 경우입니다. 로그에 `Transcribed` 줄이 있는데 텍스트가 안 들어오면 이 경우입니다.
-- **macOS: 녹음이 무음**: 마이크 권한을 확인하세요.
+- **macOS: 녹음이 무음 / 인식 결과가 빔**: 마이크 권한을 확인하세요.
+- **macOS: `There is no Stream(gpu, 1) in current thread`**: MLX 호출이 여러 스레드에서 실행된 경우입니다. `transcriber.py` 는 모든 MLX 호출을 전용 워커 스레드 하나에서 실행합니다. 이 구조를 바꾸지 마세요.
+- **macOS: 앱이 두 번 실행됨 / 종료 후 다시 안 열림**: `run.py` 의 `multiprocessing.freeze_support()` 가 빠지면 빌드 앱의 자식 프로세스가 앱 전체를 다시 실행합니다. 남은 프로세스는 `pkill -9 -f MacOS/Listener` 로 정리하세요.
