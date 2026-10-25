@@ -26,6 +26,7 @@ class Config:
     beam_size: int = 5
     vad_filter: bool = True
     sample_rate: int = 16000
+    input_device: str = ""  # sounddevice name (substring ok); "" = system default
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:

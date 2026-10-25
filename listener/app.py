@@ -14,7 +14,7 @@ else:
 import pystray
 from PIL import Image, ImageDraw
 
-from .audio import Recorder
+from .audio import Recorder, input_devices
 from .config import APP_DIR, AVAILABLE_MODELS, Config, load_config, save_config
 from .hotkey import Hotkey
 from .inject import paste_text
@@ -52,13 +52,14 @@ class App:
         self.cfg = cfg
         self.state = State.LOADING
         self._state_lock = threading.Lock()
-        self.recorder = Recorder(cfg.sample_rate)
+        self.recorder = Recorder(cfg.sample_rate, cfg.input_device)
         self.transcriber = Transcriber(
             cfg.model, cfg.device, cfg.compute_type, cfg.language,
             cfg.beam_size, cfg.vad_filter, cfg.sample_rate,
         )
         self.icon = pystray.Icon("listener", make_icon(COLORS[State.LOADING]), "Listener", menu=self._menu())
         self.hotkey: Hotkey | None = None
+        self._devices = input_devices()
 
     def _menu(self) -> pystray.Menu:
         def model_item(name: str):
@@ -69,11 +70,28 @@ class App:
                 radio=True,
             )
 
+        def device_item(label: str, name: str):
+            return pystray.MenuItem(
+                label,
+                lambda: self._switch_device(name),
+                checked=lambda item: self.cfg.input_device == name,
+                radio=True,
+            )
+
+        def device_menu():
+            yield device_item("시스템 기본", "")
+            yield pystray.Menu.SEPARATOR
+            for name in self._devices:
+                yield device_item(name, name)
+            yield pystray.Menu.SEPARATOR
+            yield pystray.MenuItem("목록 새로고침", self._rescan_devices)
+
         return pystray.Menu(
             pystray.MenuItem(lambda item: f"상태: {self.state.value} ({self.transcriber.device})", None, enabled=False),
             pystray.MenuItem(f"단축키: {self.cfg.hotkey}", None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("모델", pystray.Menu(*[model_item(m) for m in AVAILABLE_MODELS])),
+            pystray.MenuItem("마이크", pystray.Menu(device_menu)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("종료", self._quit),
         )
@@ -143,6 +161,23 @@ class App:
                     self._set_state(State.IDLE)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _switch_device(self, name: str) -> None:
+        with self._state_lock:
+            if self.state == State.RECORDING:
+                return
+            self.recorder.device = name or None
+            self.cfg.input_device = name
+            save_config(self.cfg)
+        log.info("Input device: %s", name or "system default")
+        self.icon.update_menu()
+
+    def _rescan_devices(self) -> None:
+        with self._state_lock:
+            if self.state == State.RECORDING:  # re-initializing PortAudio would kill the open stream
+                return
+            self._devices = input_devices(rescan=True)
+        self.icon.update_menu()
 
     def _load_model(self) -> None:
         try:

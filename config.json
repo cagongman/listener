@@ -6,5 +6,6 @@
   "hotkey": "ctrl+alt+m",
   "beam_size": 5,
   "vad_filter": true,
-  "sample_rate": 16000
+  "sample_rate": 16000,
+  "input_device": ""
 }

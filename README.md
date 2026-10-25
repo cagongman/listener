@@ -51,6 +51,7 @@ macOS에서는 `Ctrl+Option+M`, 붙여넣기는 `Cmd+V`, 비프음 대신 시스
 
 트레이 메뉴:
 - **모델**: medium / large-v3 전환, macOS는 large-v3-turbo 추가 (선택은 `config.json`에 저장됨)
+- **마이크**: 입력 장치 선택 (선택은 `config.json`의 `input_device`에 저장됨). 앱 실행 후 연결한 헤드셋은 **목록 새로고침**을 누르면 나타남
 - **종료**
 
 ## 설정 (`config.json`)
@@ -65,6 +66,7 @@ macOS에서는 `Ctrl+Option+M`, 붙여넣기는 `Cmd+V`, 비프음 대신 시스
 | beam_size | 5 | 빔 서치 크기. 낮추면 빠르고 정확도 하락. mlx는 greedy만 지원해 무시됨 |
 | vad_filter | true | 무음 구간 제거 |
 | sample_rate | 16000 | 녹음 샘플레이트 (Whisper 입력 규격) |
+| input_device | "" | 입력 장치 이름(일부만 써도 됨, 예: `"Cagongman"`). 비우면 시스템 기본 입력. 장치가 없으면 기본 입력으로 폴백 |
 
 ## 모델 저장 위치
 
