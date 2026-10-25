@@ -1,7 +1,6 @@
 import ctypes
 import enum
 import logging
-import subprocess
 import sys
 import threading
 import time
@@ -9,6 +8,7 @@ import time
 if sys.platform == "win32":
     import winsound
 else:
+    from AppKit import NSSound
     from PyObjCTools.AppHelper import callAfter
 
 import pystray
@@ -21,6 +21,10 @@ from .inject import paste_text
 from .transcriber import Transcriber
 
 log = logging.getLogger(__name__)
+
+
+# ponytail: fixed wait so the start beep plays before a Bluetooth headset switches profile; raise it if the beep is still cut off.
+START_BEEP_SECONDS = 0.3
 
 
 class State(enum.Enum):
@@ -110,8 +114,10 @@ class App:
 
     def _beep(self, start: bool) -> None:
         if sys.platform == "darwin":
-            sound = "Tink" if start else "Pop"
-            subprocess.run(["afplay", f"/System/Library/Sounds/{sound}.aiff"], check=False)
+            # In-process NSSound starts in a few ms; afplay took ~1s to launch, delaying the mic.
+            NSSound.soundNamed_("Tink" if start else "Pop").play()
+            if start:
+                time.sleep(START_BEEP_SECONDS)
             return
         try:
             winsound.Beep(880 if start else 440, 120)
@@ -122,8 +128,10 @@ class App:
         with self._state_lock:
             if self.state == State.IDLE:
                 self._set_state(State.RECORDING)
+                # Beep before opening the mic: a Bluetooth headset switches to its call profile when the
+                # mic opens and drops any sound playing during the switch.
+                self._beep(True)
                 self.recorder.start()
-                threading.Thread(target=self._beep, args=(True,), daemon=True).start()
             elif self.state == State.RECORDING:
                 audio = self.recorder.stop()
                 self._set_state(State.PROCESSING)
