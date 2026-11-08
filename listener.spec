@@ -14,6 +14,7 @@ for pkg in pkgs:
     binaries += b
     hiddenimports += h
 datas += collect_data_files("faster_whisper")
+datas += collect_data_files("listener", includes=["assets/sounds/*"])
 hiddenimports += ["pystray._darwin"] if MAC else ["pystray._win32", "PIL._tkinter_finder"]
 
 a = Analysis(

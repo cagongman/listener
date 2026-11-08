@@ -4,6 +4,7 @@ import logging
 import sys
 import threading
 import time
+from pathlib import Path
 
 if sys.platform == "win32":
     import winsound
@@ -25,6 +26,7 @@ log = logging.getLogger(__name__)
 
 # ponytail: fixed wait so the start beep plays before a Bluetooth headset switches profile; raise it if the beep is still cut off.
 START_BEEP_SECONDS = 0.3
+SOUND_DIR = Path(__file__).resolve().parent / "assets" / "sounds"
 
 
 class State(enum.Enum):
@@ -56,6 +58,7 @@ class App:
         self.cfg = cfg
         self.state = State.LOADING
         self._state_lock = threading.Lock()
+        self._sounds = {}
         self.recorder = Recorder(cfg.sample_rate, cfg.input_device)
         self.transcriber = Transcriber(
             cfg.model, cfg.device, cfg.compute_type, cfg.language,
@@ -113,16 +116,22 @@ class App:
         self.icon.update_menu()
 
     def _beep(self, start: bool) -> None:
-        if sys.platform == "darwin":
-            # In-process NSSound starts in a few ms; afplay took ~1s to launch, delaying the mic.
-            NSSound.soundNamed_("Tink" if start else "Pop").play()
-            if start:
-                time.sleep(START_BEEP_SECONDS)
-            return
+        path = SOUND_DIR / ("record_start.wav" if start else "record_stop.wav")
         try:
-            winsound.Beep(880 if start else 440, 120)
-        except RuntimeError:
-            pass
+            if sys.platform == "darwin":
+                # Keep NSSound objects alive during asynchronous playback.
+                if start not in self._sounds:
+                    self._sounds[start] = NSSound.alloc().initWithContentsOfFile_byReference_(str(path), False)
+                sound = self._sounds[start]
+                if sound is None or not sound.play():
+                    raise RuntimeError(f"Cannot play {path}")
+                if start:
+                    time.sleep(START_BEEP_SECONDS)
+            else:
+                # Wait until the cue finishes before opening the microphone.
+                winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_NODEFAULT)
+        except (OSError, RuntimeError):
+            log.warning("Could not play recording cue: %s", path, exc_info=True)
 
     def _on_toggle(self) -> None:
         with self._state_lock:
