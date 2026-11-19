@@ -1,0 +1,19 @@
+{
+  "wake_phrases": ["헤이 모니카", "모니카"],
+  "wake_aliases": {"네 모니카": "헤이 모니카"},
+  "wake_enabled": true,
+  "command_start_timeout_seconds": 5,
+  "max_command_seconds": 30,
+  "cooldown_seconds": 3,
+  "hermes": {
+    "backend": "native",
+    "executable": "hermes",
+    "args": ["chat", "--tui", "--native"],
+    "cwd": "C:/Users/cagongman/cagongmanWS/_projects/listener",
+    "wsl_distribution": "",
+    "wsl_cwd": "~",
+    "profile": "",
+    "session_title": "",
+    "mode": "interactive"
+  }
+}

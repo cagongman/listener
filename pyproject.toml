@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "listener-speech"
+version = "0.2.0"
+description = "Shared local speech service and Windows dictation client"
+requires-python = ">=3.11"
+dependencies = [
+  "faster-whisper==1.2.1", "ctranslate2>=4.6.0", "numpy",
+  "sounddevice>=0.5.0", "keyboard>=0.13.5; sys_platform == 'win32'", "pyperclip>=1.9.0",
+  "pynput>=1.7.7; sys_platform == 'darwin'", "mlx-whisper>=0.4.3; sys_platform == 'darwin'",
+  "pystray>=0.19.5", "Pillow",
+  "nvidia-cublas-cu12; platform_system == 'Windows'",
+  "nvidia-cudnn-cu12; platform_system == 'Windows'",
+]
+
+[project.scripts]
+listener = "listener.app:main"
+listener-speech = "listener.speech_service:main"
+
+[tool.setuptools]
+packages = ["listener"]
+
+[tool.setuptools.package-data]
+listener = ["assets/sounds/*"]

@@ -222,3 +222,6 @@ sample.wav
 build_assets/
 listener.log
 !listener.spec
+listener-hermes/config.json
+*.egg-info/
+hermes.json

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+_dll_handles = []
 
 def _register_nvidia_dlls() -> None:
     if sys.platform != "win32":
@@ -20,7 +21,7 @@ def _register_nvidia_dlls() -> None:
         if not nvidia_dir.is_dir():
             continue
         for bin_dir in nvidia_dir.glob("*/bin"):
-            os.add_dll_directory(str(bin_dir))
+            _dll_handles.append(os.add_dll_directory(str(bin_dir)))
             os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
@@ -92,6 +93,7 @@ class Transcriber:
 
     def switch_model(self, model_name: str) -> None:
         with self._lock:
+            previous = self.model_name
             self._model = None
             if self.device == "mlx":
                 from mlx_whisper.transcribe import ModelHolder
@@ -99,35 +101,53 @@ class Transcriber:
                 ModelHolder.model = None
             gc.collect()
             self.model_name = model_name
-            self._model = self._create_model()
+            try:
+                self._model = self._create_model()
+            except Exception:
+                self.model_name = previous
+                self._model = self._create_model()
+                raise
 
     def transcribe(self, audio: np.ndarray) -> str:
+        return self.transcribe_result(audio)["text"]
+
+    def transcribe_result(self, audio: np.ndarray, *, wake: bool = False) -> dict:
         if audio.size < MIN_AUDIO_SECONDS * self.sample_rate:
-            return ""
+            return {"text": "", "avg_logprob": -100.0, "no_speech_prob": 1.0}
         with self._lock:
             if self._model is None:
                 self._model = self._create_model()
             if self.device == "mlx":
-                return self._transcribe_mlx(audio)
+                return self._transcribe_mlx_result(audio)
             segments, _ = self._model.transcribe(
                 audio,
                 language=self.language,
-                beam_size=self.beam_size,
+                beam_size=1 if wake else self.beam_size,
                 vad_filter=self.vad_filter,
+                condition_on_previous_text=False,
             )
-            return " ".join(s.text.strip() for s in segments).strip()
+            segments = list(segments)
+            return {"text": " ".join(s.text.strip() for s in segments).strip(),
+                    "avg_logprob": min((s.avg_logprob for s in segments), default=-100.0),
+                    "no_speech_prob": max((s.no_speech_prob for s in segments), default=1.0)}
 
     def _transcribe_mlx(self, audio: np.ndarray) -> str:
+        return self._transcribe_mlx_result(audio)["text"]
+
+    def _transcribe_mlx_result(self, audio: np.ndarray) -> dict:
         import mlx_whisper
 
         if self.vad_filter:
             # mlx-whisper has no VAD; reuse faster-whisper's Silero VAD so silence doesn't hallucinate text.
             speech = get_speech_timestamps(audio, sampling_rate=self.sample_rate)
             if not speech:
-                return ""
+                return {"text": "", "avg_logprob": -100.0, "no_speech_prob": 1.0}
             audio = np.concatenate(collect_chunks(audio, speech, sampling_rate=self.sample_rate)[0])
         # beam_size is ignored: mlx-whisper only implements greedy decoding.
         result = self._mlx.submit(
             mlx_whisper.transcribe, audio, path_or_hf_repo=self._model, language=self.language,
         ).result()
-        return result["text"].strip()
+        segments = result.get("segments") or []
+        return {"text": result["text"].strip(),
+                "avg_logprob": min((s.get("avg_logprob", -100.0) for s in segments), default=-100.0),
+                "no_speech_prob": max((s.get("no_speech_prob", 1.0) for s in segments), default=1.0)}

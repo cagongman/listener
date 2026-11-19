@@ -38,4 +38,6 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
 
 
 def save_config(cfg: Config, path: Path = CONFIG_PATH) -> None:
-    path.write_text(json.dumps(asdict(cfg), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(asdict(cfg), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(path)
