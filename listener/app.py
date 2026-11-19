@@ -1,18 +1,18 @@
 import ctypes
 import enum
 import logging
+import queue
 import sys
 import threading
 import winsound
 
 import pystray
-from PIL import Image, ImageDraw
 
-from .audio import Recorder
-from .config import APP_DIR, AVAILABLE_MODELS, Config, load_config, save_config
+from .config import APP_DIR, AVAILABLE_MODELS, Config, load_config
 from .hotkey import Hotkey
 from .inject import paste_text
-from .transcriber import Transcriber
+from .speech_client import SpeechClient
+from .ui import make_icon
 
 log = logging.getLogger(__name__)
 
@@ -20,145 +20,146 @@ log = logging.getLogger(__name__)
 class State(enum.Enum):
     LOADING = "loading"
     IDLE = "idle"
+    STARTING = "starting"
     RECORDING = "recording"
     PROCESSING = "processing"
+    ERROR = "error"
 
 
-COLORS = {
-    State.LOADING: (128, 128, 128),
-    State.IDLE: (60, 160, 80),
-    State.RECORDING: (220, 50, 50),
-    State.PROCESSING: (230, 180, 40),
-}
-
-
-def make_icon(color: tuple[int, int, int], size: int = 64) -> Image.Image:
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse((4, 4, size - 4, size - 4), fill=color)
-    d.rounded_rectangle((size * 0.38, size * 0.2, size * 0.62, size * 0.6), radius=8, fill=(255, 255, 255))
-    d.rectangle((size * 0.48, size * 0.6, size * 0.52, size * 0.78), fill=(255, 255, 255))
-    return img
+COLORS = {State.LOADING: (128, 128, 128), State.IDLE: (60, 160, 80),
+          State.STARTING: (230, 180, 40), State.RECORDING: (220, 50, 50),
+          State.PROCESSING: (230, 180, 40), State.ERROR: (210, 75, 45)}
 
 
 class App:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.state = State.LOADING
-        self._state_lock = threading.Lock()
-        self.recorder = Recorder(cfg.sample_rate)
-        self.transcriber = Transcriber(
-            cfg.model, cfg.device, cfg.compute_type, cfg.language,
-            cfg.beam_size, cfg.vad_filter, cfg.sample_rate,
-        )
-        self.icon = pystray.Icon("listener", make_icon(COLORS[State.LOADING]), "Listener", menu=self._menu())
-        self.hotkey: Hotkey | None = None
+        self._state_lock = threading.RLock()
+        self.stopping = threading.Event()
+        self.client = SpeechClient()
+        self.model_name = cfg.model
+        self.device = "connecting"
+        self.icon = pystray.Icon("listener", make_icon(COLORS[self.state]),
+                                 "Listener", menu=self._menu())
+        self.hotkey = None
 
-    def _menu(self) -> pystray.Menu:
-        def model_item(name: str):
-            return pystray.MenuItem(
-                name,
-                lambda: self._switch_model(name),
-                checked=lambda item: self.transcriber.model_name == name,
-                radio=True,
-            )
+    def _menu(self):
+        def model_item(name):
+            return pystray.MenuItem(name, lambda: self._switch_model(name),
+                                    checked=lambda item: self.model_name == name, radio=True)
 
         return pystray.Menu(
-            pystray.MenuItem(lambda item: f"상태: {self.state.value} ({self.transcriber.device})", None, enabled=False),
+            pystray.MenuItem(lambda _: f"상태: {self.state.value} ({self.device})", None, enabled=False),
             pystray.MenuItem(f"단축키: {self.cfg.hotkey}", None, enabled=False),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("모델", pystray.Menu(*[model_item(m) for m in AVAILABLE_MODELS])),
-            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("모델", pystray.Menu(*[model_item(name) for name in AVAILABLE_MODELS])),
+            pystray.MenuItem("재연결", lambda: self.client.close()),
             pystray.MenuItem("종료", self._quit),
         )
 
-    def _set_state(self, state: State) -> None:
+    def _set_state(self, state):
+        if self.stopping.is_set():
+            return
         self.state = state
         self.icon.icon = make_icon(COLORS[state])
         self.icon.title = f"Listener - {state.value}"
         self.icon.update_menu()
 
-    def _beep(self, start: bool) -> None:
+    def _beep(self, start):
         try:
             winsound.Beep(880 if start else 440, 120)
         except RuntimeError:
             pass
 
-    def _on_toggle(self) -> None:
+    def _on_toggle(self):
         with self._state_lock:
             if self.state == State.IDLE:
-                self._set_state(State.RECORDING)
-                self.recorder.start()
-                threading.Thread(target=self._beep, args=(True,), daemon=True).start()
+                self._set_state(State.STARTING)
+                start = True
             elif self.state == State.RECORDING:
-                audio = self.recorder.stop()
                 self._set_state(State.PROCESSING)
-                threading.Thread(target=self._beep, args=(False,), daemon=True).start()
-                threading.Thread(target=self._process, args=(audio,), daemon=True).start()
+                start = False
             else:
-                log.info("Hotkey ignored in state %s", self.state.value)
-
-    def _process(self, audio) -> None:
+                return
         try:
-            text = self.transcriber.transcribe(audio)
-            log.info("Transcribed (%.1fs audio): %r", audio.size / self.cfg.sample_rate, text)
-            paste_text(text)
-        except Exception:
-            log.exception("Transcription failed")
-        finally:
+            if start:
+                self.client.call("begin_dictation")
+                with self._state_lock:
+                    self._set_state(State.RECORDING)
+                self._beep(True)
+            else:
+                threading.Thread(target=self._beep, args=(False,), daemon=True).start()
+                result = self.client.call("end_dictation", timeout=300)
+                if not self.stopping.is_set():
+                    paste_text(result["text"])
+                with self._state_lock:
+                    self._set_state(State.IDLE)
+        except Exception as exc:
+            log.exception("Dictation failed")
+            self.icon.notify(str(exc), "Listener")
             with self._state_lock:
-                self._set_state(State.IDLE)
+                self._set_state(State.IDLE if self.client.connected else State.ERROR)
 
-    def _switch_model(self, name: str) -> None:
+    def _switch_model(self, name):
         with self._state_lock:
-            if self.state != State.IDLE or name == self.transcriber.model_name:
+            if self.state != State.IDLE or name == self.model_name:
                 return
             self._set_state(State.LOADING)
 
         def work():
             try:
-                self.transcriber.switch_model(name)
-                self.cfg.model = name
-                save_config(self.cfg)
-            except Exception:
+                result = self.client.call("set_model", model=name, timeout=300)
+                self.model_name, self.device = result["model"], result["device"]
+            except Exception as exc:
                 log.exception("Model switch failed")
+                self.icon.notify(str(exc), "Listener")
             finally:
                 with self._state_lock:
-                    self._set_state(State.IDLE)
+                    self._set_state(State.IDLE if self.client.connected else State.ERROR)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _load_model(self) -> None:
-        try:
-            self.transcriber.load()
-        except Exception:
-            log.exception("Model load failed")
-            self.icon.notify("모델 로드 실패. 로그를 확인하세요.", "Listener")
-            return
-        with self._state_lock:
-            self._set_state(State.IDLE)
-        log.info("Ready: %s on %s", self.transcriber.model_name, self.transcriber.device)
+    def _supervise(self):
+        while not self.stopping.is_set():
+            try:
+                if not self.client.connected:
+                    self._set_state(State.LOADING)
+                    result = self.client.connect()
+                    self.model_name, self.device = result["model"], result["device"]
+                    self._set_state(State.IDLE)
+                event = self.client.events.get(timeout=1)
+                if event["type"] == "disconnected":
+                    if not self.client.connected:
+                        self._set_state(State.ERROR)
+                elif event["type"] == "model_changed":
+                    self.model_name, self.device = event["model"], event["device"]
+                    self.icon.update_menu()
+            except queue.Empty:
+                continue
+            except Exception:
+                log.exception("Speech service connection failed")
+                self._set_state(State.ERROR)
+                self.stopping.wait(3)
 
-    def _quit(self) -> None:
+    def _quit(self):
+        self.stopping.set()
         if self.hotkey:
             self.hotkey.remove()
-        if self.recorder.recording:
-            self.recorder.stop()
+        self.client.close()
         self.icon.stop()
 
-    def run(self) -> None:
+    def run(self):
         if not ctypes.windll.shell32.IsUserAnAdmin():
-            log.warning("Not running as administrator: hotkey and paste will not work in elevated windows")
+            log.warning("Elevated target windows require running Listener as administrator")
         self.hotkey = Hotkey(self.cfg.hotkey, self._on_toggle)
-        threading.Thread(target=self._load_model, daemon=True).start()
+        threading.Thread(target=self._supervise, daemon=True).start()
         self.icon.run()
 
 
-def main() -> None:
+def main():
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    if getattr(sys, "frozen", False):
-        logging.basicConfig(level=logging.INFO, format=fmt, filename=APP_DIR / "listener.log", encoding="utf-8")
-    else:
-        logging.basicConfig(level=logging.INFO, format=fmt)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.basicConfig(level=logging.INFO, format=fmt,
+                        **({"filename": APP_DIR / "listener.log", "encoding": "utf-8"}
+                           if getattr(sys, "frozen", False) else {}))
     App(load_config()).run()
