@@ -1,3 +1,4 @@
+import logging
 import threading
 import queue
 from collections import deque
@@ -5,10 +6,22 @@ from collections import deque
 import numpy as np
 import sounddevice as sd
 
+log = logging.getLogger(__name__)
+
+
+def input_devices(rescan: bool = False) -> list[str]:
+    if rescan:
+        # PortAudio caches the device list at init; re-init to see headsets connected after launch.
+        sd._terminate()
+        sd._initialize()
+    names = [d["name"] for d in sd.query_devices() if d["max_input_channels"] > 0]
+    return list(dict.fromkeys(names))
+
 
 class Recorder:
-    def __init__(self, sample_rate: int = 16000):
+    def __init__(self, sample_rate: int = 16000, device: str = ""):
         self.sample_rate = sample_rate
+        self.device = device or None
         self._chunks: list[np.ndarray] = []
         self._stream: sd.InputStream | None = None
         self._lock = threading.Lock()
@@ -25,13 +38,22 @@ class Recorder:
         if self._stream is not None:
             return
         self._chunks = []
-        self._stream = sd.InputStream(
+        try:
+            stream = self._open(self.device)
+        except ValueError:  # named device unplugged/renamed: record from the system default instead
+            log.warning("Input device %r not found; using system default", self.device)
+            stream = self._open(None)
+        stream.start()
+        self._stream = stream
+
+    def _open(self, device: str | None) -> sd.InputStream:
+        return sd.InputStream(
             samplerate=self.sample_rate,
             channels=1,
             dtype="float32",
+            device=device,
             callback=self._callback,
         )
-        self._stream.start()
 
     def stop(self) -> np.ndarray:
         if self._stream is None:
@@ -90,10 +112,11 @@ class AudioRing:
 
 class AudioHub:
     """The service's only InputStream. Callbacks copy into a bounded queue."""
-    def __init__(self, sample_rate=16000):
+    def __init__(self, sample_rate=16000, device=""):
         if sample_rate != 16000:
             raise ValueError("Shared speech service requires sample_rate=16000")
         self.sample_rate = sample_rate
+        self.device = device or None
         self.ring = AudioRing(sample_rate * 45)
         self.blocks: queue.Queue = queue.Queue(maxsize=128)
         self.overrun = threading.Event()
@@ -123,14 +146,23 @@ class AudioHub:
                 self.blocks.get_nowait()
             except queue.Empty:
                 break
-        stream = sd.InputStream(samplerate=16000, channels=1, dtype="float32",
-                                blocksize=512, callback=self._callback)
+        try:
+            stream = self._open(self.device)
+        except ValueError:
+            if not self.device:
+                raise
+            log.warning("Input device %r not found; using system default", self.device)
+            stream = self._open(None)
         try:
             stream.start()
         except Exception:
             stream.close()
             raise
         self._stream = stream
+
+    def _open(self, device):
+        return sd.InputStream(samplerate=16000, channels=1, dtype="float32",
+                              device=device, blocksize=512, callback=self._callback)
 
     def close(self):
         stream, self._stream = self._stream, None

@@ -1,8 +1,9 @@
 # Listener
 
-`Ctrl+Alt+M` 토글로 음성을 녹음하고 faster-whisper로 인식해 현재 커서 위치에 텍스트를 붙여넣는 Windows 트레이 앱.
+`Ctrl+Alt+M` 토글로 음성을 녹음하고 Whisper(Windows: faster-whisper, macOS: mlx-whisper)로 인식해 현재 커서 위치에 텍스트를 붙여넣는 트레이(메뉴바) 앱. Windows와 macOS를 지원합니다.
 
-## Hermes 음성 호출 및 공통 엔진
+## Hermes 음성 호출 및 공통 엔진 (Windows)
+
 
 새 `listener-hermes/` 앱은 “헤이 모니카 / 모니카”로 Hermes CLI를 실행합니다. 두 앱은 공통 음성 서비스에서 마이크와 Whisper 인스턴스 하나를 공유합니다. 기존 listener도 서비스 클라이언트로 전환되었습니다.
 
@@ -17,9 +18,9 @@ python -m listener_hermes
 
 ## 요구 사항
 
-- Windows 10/11
+- Windows 10/11 또는 macOS (Apple Silicon에서 검증)
 - Python 3.11+ (소스 실행 시)
-- NVIDIA GPU (선택, CUDA 12). 없거나 초기화 실패 시 CPU(int8)로 자동 폴백
+- NVIDIA GPU (Windows 선택, CUDA 12). 없거나 초기화 실패 시 CPU(int8)로 자동 폴백. macOS(Apple Silicon)는 mlx-whisper로 GPU(Metal)에서 동작
 - 마이크
 
 ## 설치 (소스 실행)
@@ -32,6 +33,17 @@ pip install -r requirements.txt
 
 `nvidia-cublas-cu12`, `nvidia-cudnn-cu12` 가 pip로 함께 설치되므로 별도 CUDA Toolkit 설치는 필요 없습니다.
 
+macOS (시스템 Python 3.9는 지원하지 않으므로 Homebrew 등으로 3.11+ 설치):
+
+```
+brew install python@3.12
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+`requirements.txt` 의 플랫폼 마커에 따라 Windows는 `keyboard` + CUDA 런타임, macOS는 `pynput` + `mlx-whisper` 가 설치됩니다.
+
 ## 실행
 
 ```
@@ -43,31 +55,52 @@ python -m listener
 3. 다시 `Ctrl+Alt+M` → 녹음 종료, 인식 중 (아이콘 노랑)
 4. 인식된 텍스트가 커서 위치에 붙여넣기됨. 기존 클립보드 내용은 복원됨
 
+Windows와 macOS 모두 녹음 시작·종료 시 Kenney의 짧은 상승음·하강음을 재생합니다. 효과음과 CC0 라이선스는 `listener/assets/sounds/`에 보관하며 Git 저장소와 PyInstaller 빌드에 함께 포함합니다.
+
+macOS에서는 `Ctrl+Option+M`, 붙여넣기는 `Cmd+V`를 씁니다. 처음 실행 시 아래 권한을 실행 주체(소스 실행: 터미널 앱, 빌드: Listener.app)에 허용해야 합니다 (시스템 설정 → 개인정보 보호 및 보안):
+
+- **마이크**: 녹음 (첫 녹음 때 시스템 팝업)
+- **손쉬운 사용**: 전역 단축키 + `Cmd+V` 키 입력 전송 (빌드 앱은 시작 시 시스템 팝업을 띄움)
+- **입력 모니터링**: 목록에 나타나면 함께 허용
+
+빌드 앱은 손쉬운 사용 권한이 허용될 때까지 기다렸다가 단축키를 자동으로 켭니다(재시작 불필요). 대기 중이면 로그에 `Waiting for Accessibility permission` 이 남습니다. 소스 실행은 권한 허용 후 다시 실행하세요.
+
 트레이 메뉴:
-- **모델**: medium / large-v3 전환 (선택은 `config.json`에 저장됨)
+- **모델**: medium / large-v3 전환, macOS는 large-v3-turbo 추가 (선택은 `config.json`에 저장됨)
+- **마이크**: 입력 장치 선택 (선택은 `config.json`의 `input_device`에 저장됨). 앱 실행 후 연결한 헤드셋은 **목록 새로고침**을 누르면 나타남
 - **종료**
 
 ## 설정 (`config.json`)
 
 | 키 | 기본값 | 설명 |
 |---|---|---|
-| model | large-v3 | `medium` 또는 `large-v3` |
-| device | auto | `auto` / `cuda` / `cpu` |
+| model | large-v3 | `medium` / `large-v3` / `large-v3-turbo`(macOS 메뉴에만 표시) |
+| device | auto | `auto` / `cuda` / `cpu` / `mlx`. macOS의 `auto`는 mlx(GPU), `cpu`는 faster-whisper(CPU int8) |
 | compute_type | float16 | GPU용 연산 정밀도. CPU 폴백 시 자동으로 int8 |
 | language | ko | 인식 언어 (ISO 639-1) |
-| hotkey | ctrl+alt+m | 전역 단축키 ([keyboard](https://github.com/boppreh/keyboard) 표기) |
-| beam_size | 5 | 빔 서치 크기. 낮추면 빠르고 정확도 하락 |
+| hotkey | ctrl+alt+m | 전역 단축키 ([keyboard](https://github.com/boppreh/keyboard) 표기, macOS는 `cmd`/`option` 도 사용 가능) |
+| beam_size | 5 | 빔 서치 크기. 낮추면 빠르고 정확도 하락. mlx는 greedy만 지원해 무시됨 |
 | vad_filter | true | 무음 구간 제거 |
 | sample_rate | 16000 | 녹음 샘플레이트 (Whisper 입력 규격) |
+| input_device | "" | 입력 장치 이름(일부만 써도 됨, 예: `"Cagongman"`). 비우면 시스템 기본 입력. 장치가 없으면 기본 입력으로 폴백 |
 
 ## 모델 저장 위치
 
 Whisper 모델은 Hugging Face 캐시에 저장되며 첫 실행 시 자동 다운로드됩니다.
 
 ```
-%USERPROFILE%\.cache\huggingface\hub\
+%USERPROFILE%\.cache\huggingface\hub\          (macOS: ~/.cache/huggingface/hub/)
 ├── models--Systran--faster-whisper-medium     약 1.4 GB
 └── models--Systran--faster-whisper-large-v3   약 3.5 GB
+```
+
+macOS(mlx)는 별도 형식의 모델을 받습니다.
+
+```
+~/.cache/huggingface/hub/
+├── models--mlx-community--whisper-medium-mlx     약 1.4 GB
+├── models--mlx-community--whisper-large-v3-mlx   약 2.9 GB
+└── models--mlx-community--whisper-large-v3-turbo 약 1.5 GB
 ```
 
 - 소스 실행과 exe 실행이 같은 캐시를 공유합니다.
@@ -80,12 +113,26 @@ Whisper 모델은 Hugging Face 캐시에 저장되며 첫 실행 시 자동 다�
 python build.py
 ```
 
-`dist/ListenerSuite/`에 `Listener.exe`, `ListenerHermes.exe`, `ListenerSpeech.exe`와 공통 CUDA 런타임이 생성됩니다. `dist/ListenerSuite` 폴더 전체를 복사해서 사용하세요. 기존 `dist/Listener`는 덮어쓰지 않습니다.
+`dist/ListenerSuite/`에 `Listener.exe`, `ListenerHermes.exe`, `ListenerSpeech.exe`와 공통 런타임이 생성됩니다. 폴더 전체를 함께 복사하세요. 기존 `dist/Listener/`는 유지합니다.
 
 - 설정: exe 옆의 `config.json`
 - 로그: exe 옆의 `listener.log` (콘솔 창 없음)
 - Whisper 모델은 exe에 포함되지 않음 → 위 "모델 저장 위치" 참고
 - 빌드 정의: `listener.spec`, 진입점: `run.py`
+
+macOS:
+
+```
+export LISTENER_SIGN_IDENTITY="Apple Development: 이름 (XXXXXXXXXX)"   # 선택, 아래 참고
+python build.py
+```
+
+macOS에서 빌드하면 `dist/Listener.app` (약 600MB, mlx 포함) 이 생성됩니다. 크로스 빌드는 안 되므로 각 OS에서 빌드하세요.
+
+- 설정/로그: `~/Library/Application Support/Listener/` (`config.json`, `listener.log`). 앱 번들 안에 쓰면 코드 서명이 깨지므로 분리. `config.json` 이 없으면 기본값 사용
+- 메뉴바 전용 앱(`LSUIElement`)이라 Dock 아이콘이 없습니다
+- **서명**: `LISTENER_SIGN_IDENTITY` 를 설정하면 그 인증서로 `codesign` 합니다. 사용 가능한 인증서는 `security find-identity -v -p codesigning` 으로 확인하세요. 설정하지 않으면 ad-hoc 서명이 되는데, ad-hoc은 빌드마다 서명 해시가 바뀌어 macOS가 손쉬운 사용/입력 모니터링 권한을 **매 빌드마다 초기화**합니다
+- 인증서 서명 빌드도 공증(notarization)은 되지 않았으므로 다른 Mac에서는 Gatekeeper 경고가 뜹니다(우클릭 → 열기)
 
 ## 모델 비교
 
@@ -95,19 +142,26 @@ python bench.py sample.wav     # medium, large-v3 로드/인식 시간 및 결�
 python bench.py sample.wav --models medium   # 특정 모델만
 ```
 
+참고 측정 (Apple Silicon, 6.8초 한국어 샘플, 인식 시간):
+
+| 모델 | faster-whisper CPU int8 | mlx (GPU) |
+|---|---|---|
+| medium | 2.79s | 0.71s |
+| large-v3 | - | 1.32s |
+| large-v3-turbo | - | 0.73s |
+
 ## 프로젝트 구조
 
 ```
 listener/
-├── app.py          # 상태머신 + 트레이 UI, 공통 서비스 클라이언트
-├── speech_service.py # 단일 Whisper/마이크 소유, 세션과 작업 실행
-├── speech_client.py  # 인증된 Named Pipe JSON RPC와 이벤트
-├── speech_queue.py   # 우선순위 및 호출 후보 병합
-├── vad.py          # Silero 스트리밍 VAD와 발화 종료 검출
-├── audio.py        # sounddevice AudioHub + 제한된 링 버퍼
-├── transcriber.py  # faster-whisper 래퍼, GPU→CPU 폴백, CUDA DLL 경로 등록
-├── inject.py       # 클립보드 백업 → 붙여넣기(Ctrl+V) → 복원
-├── hotkey.py       # 전역 단축키
+├── app.py          # Windows 트레이 UI와 공통 음성 서비스 클라이언트
+├── macos_app.py    # macOS 메뉴바 앱, 권한·입력 장치·녹음 확인음
+├── speech_service.py # Windows 단일 Whisper/마이크 소유
+├── speech_client.py  # 인증된 로컬 JSON IPC
+├── audio.py        # sounddevice 마이크 녹음
+├── transcriber.py  # faster-whisper/mlx-whisper 래퍼, GPU→CPU 폴백, CUDA DLL 경로 등록
+├── inject.py       # 클립보드 백업 → 붙여넣기(Ctrl+V / macOS Cmd+V) → 복원
+├── hotkey.py       # 전역 단축키 (Windows: keyboard, macOS: pynput)
 └── config.py       # config.json 로드/저장
 ```
 
@@ -118,3 +172,12 @@ listener/
 - **`cublas64_12.dll is not found`**: `nvidia-cublas-cu12` 가 설치되어 있는지 확인하세요. `transcriber.py` 가 `site-packages/nvidia/*/bin` 을 DLL 검색 경로에 등록합니다.
 - **GPU가 아닌 CPU로 동작**: `listener.log` 에서 `CUDA load failed` 경고를 확인하세요. `device`를 `cuda`로 고정하면 폴백 없이 오류가 출력됩니다.
 - **인식 결과가 비어 있음**: 녹음이 0.3초 미만이거나 VAD가 전부 무음으로 판단한 경우입니다. `vad_filter`를 `false`로 바꿔 확인해 보세요.
+- **macOS: 단축키가 반응 없음**: 로그에 `not trusted` 또는 `Waiting for Accessibility permission` 이 있으면 손쉬운 사용 권한이 없는 것입니다. 목록에 Listener가 켜져 있는데도 그렇다면 다른 빌드(ad-hoc 서명)에 대한 권한이 남은 것이니 초기화 후 다시 허용하세요:
+  ```
+  tccutil reset Accessibility com.cagongman.listener
+  tccutil reset ListenEvent com.cagongman.listener
+  ```
+- **macOS: 인식은 되는데 붙여넣기가 안 됨**: 손쉬운 사용 권한이 없는 경우입니다. 로그에 `Transcribed` 줄이 있는데 텍스트가 안 들어오면 이 경우입니다.
+- **macOS: 녹음이 무음 / 인식 결과가 빔**: 마이크 권한을 확인하세요.
+- **macOS: `There is no Stream(gpu, 1) in current thread`**: MLX 호출이 여러 스레드에서 실행된 경우입니다. `transcriber.py` 는 모든 MLX 호출을 전용 워커 스레드 하나에서 실행합니다. 이 구조를 바꾸지 마세요.
+- **macOS: 앱이 두 번 실행됨 / 종료 후 다시 안 열림**: `run.py` 의 `multiprocessing.freeze_support()` 가 빠지면 빌드 앱의 자식 프로세스가 앱 전체를 다시 실행합니다. 남은 프로세스는 `pkill -9 -f MacOS/Listener` 로 정리하세요.

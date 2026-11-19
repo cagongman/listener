@@ -11,7 +11,7 @@ from multiprocessing import AuthenticationError
 
 import numpy as np
 
-from .audio import AudioHub
+from .audio import AudioHub, input_devices
 from .config import AVAILABLE_MODELS, Config, load_config, save_config
 from .speech_protocol import ServiceLock, auth_key, endpoint, receive, runtime_dir, send
 from .speech_queue import Job, JobQueue
@@ -94,7 +94,7 @@ class SpeechService:
                                       cfg.beam_size, cfg.vad_filter, cfg.sample_rate)
         self.cfg = cfg
         self.transcriber = transcriber
-        self.hub = hub or AudioHub(cfg.sample_rate)
+        self.hub = hub or AudioHub(cfg.sample_rate, cfg.input_device)
         self.vad_factory = vad_factory
         self.vad = None
         self.segmenter = Segmenter()
@@ -119,7 +119,7 @@ class SpeechService:
     def status(self):
         return {"state": self.state, "error": self.error, "model": self.transcriber.model_name,
                 "device": self.transcriber.device, "busy": self.busy,
-                "sample_rate": 16000, "pid": os.getpid()}
+                "sample_rate": 16000, "input_device": self.cfg.input_device, "pid": os.getpid()}
 
     def broadcast(self, kind, **payload):
         for peer in list(self.peers.values()):
@@ -238,6 +238,48 @@ class SpeechService:
                     self.processing = None
                 self._invalidate()
                 peer.reply(request_id)
+            elif kind == "list_input_devices":
+                rescan = message.get("rescan", False)
+                if not isinstance(rescan, bool):
+                    raise ValueError("rescan must be a boolean")
+                running = self.hub.running
+                if rescan:
+                    if self.busy:
+                        raise RuntimeError("Finish recording or command capture before rescanning devices")
+                    self.hub.close()
+                    self._invalidate()
+                try:
+                    devices = input_devices(rescan=rescan)
+                finally:
+                    if rescan and running:
+                        self.hub.start()
+                peer.reply(request_id, {"devices": devices})
+            elif kind == "set_input_device":
+                name = message.get("input_device")
+                if not isinstance(name, str) or len(name) > 512:
+                    raise ValueError("input_device must be a device name")
+                if self.busy:
+                    raise RuntimeError("Finish recording or command capture before switching devices")
+                previous = self.cfg.input_device
+                running = self.hub.running
+                self.hub.close()
+                self._invalidate()
+                self.hub.device = name or None
+                try:
+                    # Validate the chosen input even if no client is recording yet.
+                    self.hub.start()
+                except Exception:
+                    self.hub.device = previous or None
+                    if running:
+                        self.hub.start()
+                    raise
+                finally:
+                    if not running:
+                        self.hub.close()
+                self.cfg.input_device = name
+                save_config(self.cfg)
+                self.broadcast("input_device_changed", input_device=name)
+                peer.reply(request_id, {"input_device": name})
             elif kind == "set_model":
                 model = message.get("model")
                 if model not in AVAILABLE_MODELS:
